@@ -138,7 +138,8 @@ export async function runOverdueCheck(db) {
             INSERT INTO notifications (order_id, phone, content, type)
             VALUES (?, ?, ?, 'reminder')
           `, [order.id, order.receiver_phone, content])
-          await db.query('UPDATE express_orders SET notified = notified + 1 WHERE id = ?', [order.id])
+          const newNotified = Number(order.notified || 0) + 1
+          await db.query('UPDATE express_orders SET notified = ? WHERE id = ?', [newNotified, order.id])
           notifCount++
         }
       }

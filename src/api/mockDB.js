@@ -93,6 +93,17 @@ let db = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
 if (!db || !db.users || db.users.length === 0) {
   db = defaultData
   save()
+} else {
+  let needSave = false
+  if (db.users) {
+    for (const u of db.users) {
+      if (u.company === undefined) {
+        u.company = u.role === 'courier' ? '顺丰速运' : ''
+        needSave = true
+      }
+    }
+  }
+  if (needSave) save()
 }
 
 function save() {
@@ -402,6 +413,23 @@ function doInsert(parsed, params) {
     }
     row[col] = v
   })
+
+  const nowStr = dayjs().format('YYYY-MM-DD HH:mm:ss')
+  const defaultCols = {
+    users: { created_at: nowStr, company: '' },
+    lockers: { created_at: nowStr, status: 'empty', type: 'normal', size: 'medium' },
+    express_orders: { created_at: nowStr, status: 'in_transit', size: 'medium', refrigerated: 0, storage_fee: 0, notified: 0, failed_attempts: 0, locked: 0 },
+    pickup_records: { attempt_time: nowStr, success: 0 },
+    return_orders: { created_at: nowStr, status: 'pending', fee: 0 },
+    couriers: { created_at: nowStr, status: 'available' },
+    financial_records: { created_at: nowStr, settled: 0 },
+    notifications: { sent_at: nowStr },
+    work_orders: { created_at: nowStr, status: 'pending' }
+  }
+  const defaults = defaultCols[parsed.tableName] || {}
+  for (const key in defaults) {
+    if (row[key] === undefined || row[key] === null) row[key] = defaults[key]
+  }
   
   table.push(row)
   save()

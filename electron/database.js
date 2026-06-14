@@ -64,12 +64,13 @@ try {
 
     CREATE TABLE IF NOT EXISTS pickup_records (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id INTEGER NOT NULL,
+      order_id INTEGER,
       pickup_code TEXT,
       pickup_type TEXT,
       success INTEGER DEFAULT 0,
       attempt_time DATETIME DEFAULT CURRENT_TIMESTAMP,
       operator_id INTEGER,
+      message TEXT,
       FOREIGN KEY (order_id) REFERENCES express_orders(id)
     );
 
@@ -136,6 +137,24 @@ try {
     CREATE INDEX IF NOT EXISTS idx_financial_company ON financial_records(company);
   `)
 
+  try {
+    db.prepare('ALTER TABLE users ADD COLUMN company TEXT').run()
+    console.log('[Electron DB] users 表已新增 company 字段')
+  } catch (e) {
+    if (!e.message.includes('duplicate column name')) {
+      console.log('[Electron DB] 新增 company 字段跳过（可能已存在）:', e.message)
+    }
+  }
+
+  try {
+    db.prepare('ALTER TABLE pickup_records ADD COLUMN message TEXT').run()
+    console.log('[Electron DB] pickup_records 表已新增 message 字段')
+  } catch (e) {
+    if (!e.message.includes('duplicate column name')) {
+      console.log('[Electron DB] 新增 message 字段跳过（可能已存在）:', e.message)
+    }
+  }
+
   const initData = db.prepare('SELECT COUNT(*) as cnt FROM users').get()
   if (initData.cnt === 0) {
     const insertUser = db.prepare(
@@ -165,6 +184,18 @@ try {
     insertCourier.run('赵快递', '13900000003', '中通快递', 'available')
 
     console.log('[Electron DB] 初始数据已插入')
+  } else {
+    const couriersNoCompany = db.prepare(
+      "SELECT id, username, real_name FROM users WHERE role = 'courier' AND (company IS NULL OR company = '')"
+    ).all()
+    if (couriersNoCompany && couriersNoCompany.length > 0) {
+      const updateStmt = db.prepare("UPDATE users SET company = '顺丰速运' WHERE id = ?")
+      const tx = db.transaction(rows => {
+        for (const r of rows) updateStmt.run(r.id)
+      })
+      tx(couriersNoCompany)
+      console.log(`[Electron DB] 已为 ${couriersNoCompany.length} 个快递员用户补上默认承运公司`)
+    }
   }
   console.log('[Electron DB] SQLite 数据库初始化成功')
 } catch (err) {

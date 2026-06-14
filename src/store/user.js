@@ -15,6 +15,9 @@ export const useUserStore = defineStore('user', () => {
     )
     if (result.success && result.data.length > 0) {
       user.value = result.data[0]
+      if (user.value && user.value.company === undefined) {
+        user.value.company = user.value.role === 'courier' ? '顺丰速运' : ''
+      }
       localStorage.setItem('station_user', JSON.stringify(user.value))
       return true
     }

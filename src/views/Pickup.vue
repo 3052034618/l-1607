@@ -190,7 +190,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElNotification, ElMessageBox } from 'element-plus'
 import { Search, Check, Lock, Setting } from '@element-plus/icons-vue'
 import db from '@/api/db'
-import { formatDateTime, getOrderStatusLabel, getOrderStatusType, calculateStorageFee, runOverdueCheck } from '@/utils'
+import { formatDateTime, getOrderStatusLabel, getOrderStatusType, calculateStorageFee, runOverdueCheck, formatDate } from '@/utils'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
@@ -228,14 +228,29 @@ function getDataFilterSQL() {
   if (isUser.value && currentUserPhone.value) {
     return " AND o.receiver_phone = '" + currentUserPhone.value + "'"
   }
-  if (isCourier.value && currentUserCompany.value) {
-    return " AND o.company = '" + currentUserCompany.value + "'"
+  if (isCourier.value) {
+    if (currentUserCompany.value) {
+      return " AND o.company = '" + currentUserCompany.value + "'"
+    }
+    return " AND 1 = 0"
   }
   return ''
 }
 
+async function insertPickupRecord({ order_id, pickup_code, pickup_type, success, message }) {
+  try {
+    await db.query(`
+      INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success, message, operator_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [order_id || null, pickup_code || null, pickup_type || 'scan', success ? 1 : 0, message || '', userStore.user?.id || null])
+    await loadRecords()
+  } catch (e) {
+    console.warn('insertPickupRecord error:', e.message)
+  }
+}
+
 async function loadRecords() {
-  const today = new Date().toISOString().split('T')[0]
+  const today = formatDate(new Date())
   const r = await db.query(`
     SELECT pr.*, o.waybill_no, o.company, o.receiver_phone 
     FROM pickup_records pr 
@@ -263,16 +278,30 @@ async function simulateScan() {
   scanning.value = true
   const extraFilter = getDataFilterSQL()
   const r = await db.query(`
-    SELECT waybill_no FROM express_orders o 
+    SELECT id, waybill_no, company, receiver_phone FROM express_orders o 
     WHERE status = 'arrived' ${extraFilter} LIMIT 1
   `)
-  setTimeout(() => {
+  setTimeout(async () => {
     scanning.value = false
     if (r.success && r.data && r.data.length > 0) {
-      searchInput.value = r.data[0].waybill_no
+      const o = r.data[0]
+      searchInput.value = o.waybill_no
       ElMessage.success('扫码成功')
+      await insertPickupRecord({
+        order_id: o.id,
+        pickup_type: 'scan',
+        success: 1,
+        message: `模拟扫码找到包裹：${o.waybill_no}`
+      })
     } else {
-      ElMessage.warning(isUser.value ? '您暂无待取包裹' : '暂无在库包裹')
+      const msg = isUser.value ? '您暂无待取包裹' : (isCourier.value ? '您的承运公司暂无在库包裹' : '暂无在库包裹')
+      ElMessage.warning(msg)
+      await insertPickupRecord({
+        order_id: null,
+        pickup_type: 'scan',
+        success: 0,
+        message: `模拟扫码未找到包裹：${msg}`
+      })
     }
   }, 600)
 }
@@ -287,10 +316,10 @@ async function searchPackage() {
   currentOrder.value = null
   codeVerified.value = false
   pickupCodeInput.value = ''
+  const waybill = searchInput.value.trim()
 
   try {
     await runOverdueCheck(db)
-    const waybill = searchInput.value.trim()
     const extraFilter = getDataFilterSQL()
     const r = await db.query(`
       SELECT o.*, l.code as locker_code, l.zone 
@@ -304,6 +333,12 @@ async function searchPackage() {
       if (isUser.value) msg = '未找到该包裹（或不属于您），请检查运单号'
       else if (isCourier.value) msg = '未找到该包裹（或不属于您的承运公司），请检查运单号'
       verifyResult.value = { success: false, message: msg }
+      await insertPickupRecord({
+        order_id: null,
+        pickup_type: 'scan',
+        success: 0,
+        message: `扫码查找「${waybill}」失败：${msg}`
+      })
       searching.value = false
       return
     }
@@ -312,12 +347,26 @@ async function searchPackage() {
     order.storage_fee = Number(order.storage_fee || 0)
     if (order.locked) {
       currentOrder.value = order
-      verifyResult.value = { success: false, message: `该包裹已被锁定，请联系管理员处理（连续错误3次）` }
+      const msg = `该包裹已被锁定，请联系管理员处理（连续错误3次）`
+      verifyResult.value = { success: false, message: msg }
+      await insertPickupRecord({
+        order_id: order.id,
+        pickup_type: 'scan',
+        success: 0,
+        message: `扫码查找「${waybill}」：${msg}`
+      })
       searching.value = false
       return
     }
     if (order.status !== 'arrived') {
-      verifyResult.value = { success: false, message: `包裹状态：${getOrderStatusLabel(order.status)}，无法取件` }
+      const msg = `包裹状态：${getOrderStatusLabel(order.status)}，无法取件`
+      verifyResult.value = { success: false, message: msg }
+      await insertPickupRecord({
+        order_id: order.id,
+        pickup_type: 'scan',
+        success: 0,
+        message: `扫码查找「${waybill}」：${msg}`
+      })
       searching.value = false
       return
     }
@@ -325,11 +374,23 @@ async function searchPackage() {
     currentOrder.value = order
     step.value = 2
     verifyResult.value = { success: true, message: '找到包裹，请输入取件码进行核验' }
+    await insertPickupRecord({
+      order_id: order.id,
+      pickup_type: 'scan',
+      success: 1,
+      message: `扫码查找找到包裹：${waybill}`
+    })
     nextTick(() => {
       codeInputRef.value && codeInputRef.value.focus()
     })
   } catch (e) {
     verifyResult.value = { success: false, message: '查询异常：' + e.message }
+    await insertPickupRecord({
+      order_id: null,
+      pickup_type: 'scan',
+      success: 0,
+      message: `扫码查找「${waybill}」异常：${e.message}`
+    })
   } finally {
     searching.value = false
   }
@@ -365,10 +426,13 @@ async function verifyCode() {
     const isCorrect = inputCode === order.pickup_code
 
     if (isCorrect) {
-      await db.query(`
-        INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success, message)
-        VALUES (?, ?, 'code', 1, '取件码核验通过')
-      `, [order.id, inputCode])
+      await insertPickupRecord({
+        order_id: order.id,
+        pickup_code: inputCode,
+        pickup_type: 'code',
+        success: 1,
+        message: '取件码核验通过'
+      })
 
       codeVerified.value = true
       verifyResult.value = {
@@ -385,7 +449,7 @@ async function verifyCode() {
       if (newFailed >= 3) {
         isLocked = 1
         lockMsg = '，已自动锁定并通知管理员介入'
-        const woR = await db.query(`
+        await db.query(`
           INSERT INTO work_orders (type, related_id, description, status)
           VALUES ('unlock', ?, ?, 'pending')
         `, [order.id, `运单${order.waybill_no}连续输错取件码3次，包裹自动锁定，请管理员介入解锁`])
@@ -395,10 +459,13 @@ async function verifyCode() {
         UPDATE express_orders SET failed_attempts = ?, locked = ? WHERE id = ?
       `, [newFailed, isLocked, order.id])
 
-      await db.query(`
-        INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success, message)
-        VALUES (?, ?, 'code', 0, ?)
-      `, [order.id, inputCode, `取件码错误（第${newFailed}次）${lockMsg}`])
+      await insertPickupRecord({
+        order_id: order.id,
+        pickup_code: inputCode,
+        pickup_type: 'code',
+        success: 0,
+        message: `取件码错误（第${newFailed}次）${lockMsg}`
+      })
 
       currentOrder.value.failed_attempts = newFailed
       currentOrder.value.locked = isLocked
@@ -414,8 +481,6 @@ async function verifyCode() {
         verifyResult.value = { success: false, message: `取件码错误！还剩 ${3 - newFailed} 次机会` }
       }
     }
-
-    await loadRecords()
   } catch (e) {
     verifyResult.value = { success: false, message: '核验异常：' + e.message }
   } finally {
@@ -461,13 +526,15 @@ async function confirmPickup() {
       await db.query("UPDATE lockers SET status = 'empty' WHERE id = ?", [latestOrder.locker_id])
     }
 
-    await db.query(`
-      INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success, message)
-      VALUES (?, ?, 'code', 1, ?)
-    `, [orderId, latestOrder.pickup_code,
-      finalStorageFee > 0
+    await insertPickupRecord({
+      order_id: orderId,
+      pickup_code: latestOrder.pickup_code,
+      pickup_type: 'code',
+      success: 1,
+      message: finalStorageFee > 0
         ? `取件完成，收取保管费¥${finalStorageFee.toFixed(2)}`
-        : '取件完成'])
+        : '取件完成'
+    })
 
     ElNotification({
       title: '取件成功',
@@ -481,7 +548,6 @@ async function confirmPickup() {
     verifyResult.value = null
     step.value = 1
     codeVerified.value = false
-    await loadRecords()
     await searchOrders()
   } catch (e) {
     ElMessage.error('取件失败：' + e.message)

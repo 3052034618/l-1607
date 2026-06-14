@@ -178,8 +178,11 @@ function getDataFilterSQL() {
   if (isUser.value && currentUserPhone.value) {
     return " AND o.receiver_phone = '" + currentUserPhone.value + "'"
   }
-  if (isCourier.value && currentUserCompany.value) {
-    return " AND o.company = '" + currentUserCompany.value + "'"
+  if (isCourier.value) {
+    if (currentUserCompany.value) {
+      return " AND o.company = '" + currentUserCompany.value + "'"
+    }
+    return " AND 1 = 0"
   }
   return ''
 }
