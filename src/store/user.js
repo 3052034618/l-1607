@@ -10,7 +10,7 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(username, password) {
     const result = await db.query(
-      'SELECT id, username, real_name, phone, role FROM users WHERE username = ? AND password = ?',
+      'SELECT id, username, real_name, phone, role, company FROM users WHERE username = ? AND password = ?',
       [username, password]
     )
     if (result.success && result.data.length > 0) {

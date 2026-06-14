@@ -200,9 +200,7 @@ const isUser = computed(() => userStore.user?.role === 'user')
 const currentUserPhone = computed(() => userStore.user?.phone || '')
 const currentUserCompany = computed(() => {
   if (isCourier.value) {
-    const name = userStore.user?.real_name || ''
-    const courierCompanyMap = { '快递员张': '顺丰速运' }
-    return courierCompanyMap[name] || ''
+    return userStore.user?.company || ''
   }
   return ''
 })
@@ -238,15 +236,27 @@ function getDataFilterSQL() {
 
 async function loadRecords() {
   const today = new Date().toISOString().split('T')[0]
-  const extraFilter = getDataFilterSQL()
   const r = await db.query(`
     SELECT pr.*, o.waybill_no, o.company, o.receiver_phone 
     FROM pickup_records pr 
     LEFT JOIN express_orders o ON pr.order_id = o.id 
-    WHERE DATE(pr.attempt_time) = ? ${extraFilter}
     ORDER BY pr.attempt_time DESC
-  `, [today])
-  if (r.success) pickupRecords.value = r.data
+  `)
+  if (r.success && r.data) {
+    const filtered = r.data.filter(item => {
+      if (!item.attempt_time) return false
+      const d = item.attempt_time.split(' ')[0]
+      if (d !== today) return false
+      if (isUser.value && currentUserPhone.value) {
+        return item.receiver_phone === currentUserPhone.value
+      }
+      if (isCourier.value && currentUserCompany.value) {
+        return item.company === currentUserCompany.value
+      }
+      return true
+    })
+    pickupRecords.value = filtered
+  }
 }
 
 async function simulateScan() {

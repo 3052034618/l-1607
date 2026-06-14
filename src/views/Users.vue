@@ -27,6 +27,12 @@
             <el-tag size="small" :type="getRoleType(row.role)">{{ getRoleLabel(row.role) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="绑定公司" width="140">
+          <template #default="{ row }">
+            <span v-if="row.role === 'courier' && row.company">{{ row.company }}</span>
+            <span v-else style="color: #999;">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="180">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
@@ -55,10 +61,15 @@
           <el-input v-model="form.phone" />
         </el-form-item>
         <el-form-item label="角色">
-          <el-select v-model="form.role" style="width: 100%;">
+          <el-select v-model="form.role" style="width: 100%;" @change="onRoleChange">
             <el-option label="管理员" value="admin" />
             <el-option label="快递员" value="courier" />
             <el-option label="普通用户" value="user" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.role === 'courier'" label="绑定公司">
+          <el-select v-model="form.company" style="width: 100%;" placeholder="请选择承运公司">
+            <el-option v-for="c in companies" :key="c" :label="c" :value="c" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -76,6 +87,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import db from '@/api/db'
 import { getRoleLabel, getRoleType, formatDateTime } from '@/utils'
+
+const companies = ['顺丰速运', '圆通速递', '中通快递', '韵达快递', '申通快递', '京东物流', '极兔速递']
 
 const users = ref([])
 const loading = ref(false)
@@ -100,18 +113,24 @@ async function loadList() {
   }
 
   const r = await db.query(
-    `SELECT id, username, real_name, phone, role, created_at FROM users WHERE ${where.join(' AND ')} ORDER BY id`,
+    `SELECT id, username, real_name, phone, role, company, created_at FROM users WHERE ${where.join(' AND ')} ORDER BY id`,
     params
   )
   if (r.success) users.value = r.data
   loading.value = false
 }
 
+function onRoleChange(role) {
+  if (role !== 'courier') {
+    form.value.company = ''
+  }
+}
+
 function showEdit(row) {
   if (row) {
     form.value = { ...row }
   } else {
-    form.value = { id: null, username: '', password: '123456', real_name: '', phone: '', role: 'user' }
+    form.value = { id: null, username: '', password: '123456', real_name: '', phone: '', role: 'user', company: '' }
   }
   editVisible.value = true
 }
@@ -122,16 +141,20 @@ async function saveUser() {
     ElMessage.warning('请填写必要信息')
     return
   }
+  if (f.role === 'courier' && !f.company) {
+    ElMessage.warning('快递员角色必须绑定承运公司')
+    return
+  }
   let r
   if (f.id) {
     r = await db.query(
-      'UPDATE users SET real_name = ?, phone = ?, role = ? WHERE id = ?',
-      [f.real_name, f.phone, f.role, f.id]
+      'UPDATE users SET real_name = ?, phone = ?, role = ?, company = ? WHERE id = ?',
+      [f.real_name, f.phone, f.role, f.company || '', f.id]
     )
   } else {
     r = await db.query(
-      'INSERT INTO users (username, password, real_name, phone, role) VALUES (?, ?, ?, ?, ?)',
-      [f.username, f.password || '123456', f.real_name, f.phone, f.role]
+      'INSERT INTO users (username, password, real_name, phone, role, company) VALUES (?, ?, ?, ?, ?, ?)',
+      [f.username, f.password || '123456', f.real_name, f.phone, f.role, f.company || '']
     )
   }
   if (r.success) {

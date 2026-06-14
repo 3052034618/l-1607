@@ -109,11 +109,15 @@ const lockerChart = ref(null)
 async function loadStats() {
   const today = new Date().toISOString().split('T')[0]
   
-  const r1 = await db.query("SELECT COUNT(*) as cnt FROM express_orders WHERE DATE(in_time) = ?", [today])
-  if (r1.success && r1.data && r1.data.length > 0) stats.todayIn = r1.data[0].cnt || 0
+  const r1 = await db.query("SELECT in_time FROM express_orders")
+  if (r1.success && r1.data) {
+    stats.todayIn = r1.data.filter(x => x.in_time && x.in_time.split(' ')[0] === today).length
+  }
   
-  const r2 = await db.query("SELECT COUNT(*) as cnt FROM express_orders WHERE DATE(pickup_time) = ?", [today])
-  if (r2.success && r2.data && r2.data.length > 0) stats.todayOut = r2.data[0].cnt || 0
+  const r2 = await db.query("SELECT pickup_time FROM express_orders")
+  if (r2.success && r2.data) {
+    stats.todayOut = r2.data.filter(x => x.pickup_time && x.pickup_time.split(' ')[0] === today).length
+  }
   
   const r3 = await db.query("SELECT COUNT(*) as cnt FROM express_orders WHERE status = 'arrived'")
   if (r3.success && r3.data && r3.data.length > 0) stats.inStock = r3.data[0].cnt || 0

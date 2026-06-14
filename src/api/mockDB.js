@@ -4,9 +4,9 @@ const STORAGE_KEY = 'station_db_v1'
 
 const defaultData = {
   users: [
-    { id: 1, username: 'admin', password: '123456', real_name: '系统管理员', phone: '13800000001', role: 'admin', created_at: '2025-01-01 00:00:00' },
-    { id: 2, username: 'courier', password: '123456', real_name: '快递员张', phone: '13800000002', role: 'courier', created_at: '2025-01-01 00:00:00' },
-    { id: 3, username: 'user', password: '123456', real_name: '普通用户', phone: '13800000003', role: 'user', created_at: '2025-01-01 00:00:00' }
+    { id: 1, username: 'admin', password: '123456', real_name: '系统管理员', phone: '13800000001', role: 'admin', company: '', created_at: '2025-01-01 00:00:00' },
+    { id: 2, username: 'courier', password: '123456', real_name: '快递员张', phone: '13800000002', role: 'courier', company: '顺丰速运', created_at: '2025-01-01 00:00:00' },
+    { id: 3, username: 'user', password: '123456', real_name: '普通用户', phone: '13800000003', role: 'user', company: '', created_at: '2025-01-01 00:00:00' }
   ],
   couriers: [
     { id: 1, name: '李快递', phone: '13900000001', company: '顺丰速运', status: 'available', created_at: '2025-01-01 00:00:00' },

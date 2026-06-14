@@ -22,6 +22,7 @@ try {
       real_name TEXT,
       phone TEXT,
       role TEXT NOT NULL DEFAULT 'user',
+      company TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -138,11 +139,11 @@ try {
   const initData = db.prepare('SELECT COUNT(*) as cnt FROM users').get()
   if (initData.cnt === 0) {
     const insertUser = db.prepare(
-      'INSERT INTO users (username, password, real_name, phone, role) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO users (username, password, real_name, phone, role, company) VALUES (?, ?, ?, ?, ?, ?)'
     )
-    insertUser.run('admin', '123456', '系统管理员', '13800000001', 'admin')
-    insertUser.run('courier', '123456', '快递员张', '13800000002', 'courier')
-    insertUser.run('user', '123456', '普通用户李', '13800000003', 'user')
+    insertUser.run('admin', '123456', '系统管理员', '13800000001', 'admin', '')
+    insertUser.run('courier', '123456', '快递员张', '13800000002', 'courier', '顺丰速运')
+    insertUser.run('user', '123456', '普通用户李', '13800000003', 'user', '')
 
     const insertLocker = db.prepare(
       'INSERT INTO lockers (code, type, size, status, zone, shelf_no) VALUES (?, ?, ?, ?, ?, ?)'

@@ -139,6 +139,12 @@ const isAdmin = computed(() => userStore.isAdmin)
 const isCourier = computed(() => userStore.user?.role === 'courier')
 const isUser = computed(() => userStore.user?.role === 'user')
 const currentUserPhone = computed(() => userStore.user?.phone || '')
+const currentUserCompany = computed(() => {
+  if (isCourier.value) {
+    return userStore.user?.company || ''
+  }
+  return ''
+})
 const currentUserId = computed(() => userStore.user?.id)
 
 const activeTab = ref('list')
@@ -178,6 +184,9 @@ function getReturnStatusType(status) {
 function getDataFilterSQL() {
   if (isUser.value && currentUserPhone.value) {
     return " AND r.user_phone = '" + currentUserPhone.value + "'"
+  }
+  if (isCourier.value && currentUserCompany.value) {
+    return " AND c.company = '" + currentUserCompany.value + "'"
   }
   return ''
 }

@@ -116,11 +116,17 @@ export async function runOverdueCheck(db) {
       const notified = Number(order.notified || 0)
       if (realFee > 0 && notified < 10) {
         const lastNotifR = await db.query(`
-          SELECT id FROM notifications 
-          WHERE order_id = ? AND DATE(sent_at) = ? AND type = 'reminder'
-          LIMIT 1
-        `, [order.id, todayStr])
-        const alreadySentToday = lastNotifR.success && lastNotifR.data && lastNotifR.data.length > 0
+          SELECT id, sent_at FROM notifications 
+          WHERE order_id = ? AND type = 'reminder'
+          ORDER BY sent_at DESC
+        `, [order.id])
+        let alreadySentToday = false
+        if (lastNotifR.success && lastNotifR.data && lastNotifR.data.length > 0) {
+          alreadySentToday = lastNotifR.data.some(n => {
+            if (!n.sent_at) return false
+            return n.sent_at.split(' ')[0] === todayStr
+          })
+        }
 
         if (!alreadySentToday) {
           const feeForMsg = realFee

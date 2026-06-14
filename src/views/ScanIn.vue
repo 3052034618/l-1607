@@ -243,10 +243,11 @@ async function loadTodayList() {
     SELECT o.*, l.code as locker_code, l.zone 
     FROM express_orders o 
     LEFT JOIN lockers l ON o.locker_id = l.id 
-    WHERE DATE(o.in_time) = ? 
     ORDER BY o.in_time DESC
-  `, [today])
-  if (r.success) todayList.value = r.data
+  `)
+  if (r.success && r.data) {
+    todayList.value = r.data.filter(x => x.in_time && x.in_time.split(' ')[0] === today)
+  }
 }
 
 async function scanCode() {

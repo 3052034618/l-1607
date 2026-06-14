@@ -72,6 +72,21 @@
       </el-col>
       <el-col :span="6">
         <div class="stat-card">
+          <div class="stat-label">保管费收入</div>
+          <div class="stat-value" style="color: #e6a23c;">¥{{ stats.storageFee }}</div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" style="margin-top: 16px;">
+      <el-col :span="6">
+        <div class="stat-card">
+          <div class="stat-label">退件费收入</div>
+          <div class="stat-value" style="color: #409eff;">¥{{ stats.returnFee }}</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
+        <div class="stat-card">
           <div class="stat-label">总营收</div>
           <div class="stat-value" style="color: #f56c6c;">¥{{ stats.totalRevenue }}</div>
         </div>
@@ -114,16 +129,16 @@
       <h3 style="font-size: 16px; margin-bottom: 16px;">快递公司详细统计</h3>
       <el-table :data="companyStats" border stripe show-summary :summary-method="getSummaries">
         <el-table-column prop="company" label="快递公司" width="140" />
-        <el-table-column label="入库量" width="100">
+        <el-table-column label="入库量" width="90">
           <template #default="{ row }">{{ row.in_count }}</template>
         </el-table-column>
-        <el-table-column label="出库量" width="100">
+        <el-table-column label="出库量" width="90">
           <template #default="{ row }">{{ row.out_count }}</template>
         </el-table-column>
-        <el-table-column label="在库量" width="100">
+        <el-table-column label="在库量" width="90">
           <template #default="{ row }">{{ row.stay_count }}</template>
         </el-table-column>
-        <el-table-column label="超时件" width="100">
+        <el-table-column label="超时件" width="90">
           <template #default="{ row }">{{ row.overdue_count }}</template>
         </el-table-column>
         <el-table-column label="超时率(%)" width="100">
@@ -136,7 +151,22 @@
         <el-table-column label="滞留率(%)" width="100">
           <template #default="{ row }">{{ row.stay_rate.toFixed(1) }}</template>
         </el-table-column>
-        <el-table-column label="营收(¥)" width="120">
+        <el-table-column label="派费(¥)" width="100">
+          <template #default="{ row }">
+            <span style="color: #67c23a;">{{ row.delivery_revenue.toFixed(2) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="保管费(¥)" width="100">
+          <template #default="{ row }">
+            <span style="color: #e6a23c;">{{ row.storage_revenue.toFixed(2) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="退件费(¥)" width="100">
+          <template #default="{ row }">
+            <span style="color: #409eff;">{{ row.return_revenue.toFixed(2) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="营收合计(¥)" width="120">
           <template #default="{ row }">
             <span style="color: #67c23a; font-weight: 600;">{{ row.revenue.toFixed(2) }}</span>
           </template>
@@ -159,7 +189,7 @@ const reportType = ref('monthly')
 const reportDate = ref(new Date())
 const stats = reactive({
   inCount: 0, outCount: 0, stayCount: 0, overdueRate: 0,
-  stayRate: 0, avgPickupHours: 0, deliveryFee: 0, totalRevenue: 0
+  stayRate: 0, avgPickupHours: 0, deliveryFee: 0, storageFee: 0, returnFee: 0, totalRevenue: 0
 })
 const companyStats = ref([])
 const sizeStats = reactive({ small: 0, medium: 0, large: 0, xlarge: 0 })
@@ -177,10 +207,10 @@ function getSummaries(param) {
   const sums = []
   columns.forEach((column, index) => {
     if (index === 0) { sums[index] = '合计'; return }
-    const keys = { 1: 'in_count', 2: 'out_count', 3: 'stay_count', 4: 'overdue_count', 7: 'revenue' }
+    const keys = { 1: 'in_count', 2: 'out_count', 3: 'stay_count', 4: 'overdue_count', 7: 'delivery_revenue', 8: 'storage_revenue', 9: 'return_revenue', 10: 'revenue' }
     if (keys[index]) {
       sums[index] = data.reduce((s, x) => s + (Number(x[keys[index]]) || 0), 0)
-      if (keys[index] === 'revenue') sums[index] = sums[index].toFixed(2)
+      if (index >= 7) sums[index] = sums[index].toFixed(2)
     } else if (index === 5) {
       const total = data.reduce((s, x) => s + x.in_count, 0)
       const overdue = data.reduce((s, x) => s + x.overdue_count, 0)
@@ -259,21 +289,25 @@ async function loadReport() {
   stats.overdueRate = inCount ? ((overdueCount / inCount) * 100).toFixed(1) : 0
   stats.avgPickupHours = pickedCount ? (totalHours / pickedCount).toFixed(1) : 0
 
-  const finSQL = `SELECT * FROM financial_records WHERE DATE(created_at) BETWEEN ? AND ?`
-  const rFin = await db.query(finSQL, [dateStart, dateEnd])
-  const finRecords = rFin.success && rFin.data ? rFin.data : []
-  let deliveryFee = 0, totalRevenue = 0
+  const finSQL = `SELECT * FROM financial_records`
+  const rFin = await db.query(finSQL)
+  const finRecords = (rFin.success && rFin.data ? rFin.data : []).filter(f => inRange(f.created_at))
+  let deliveryFee = 0, storageFee = 0, returnFee = 0, totalRevenue = 0
   for (const f of finRecords) {
     if (f.type === 'delivery') deliveryFee += Number(f.amount || 0)
+    else if (f.type === 'storage') storageFee += Number(f.amount || 0)
+    else if (f.type === 'return_fee') returnFee += Number(f.amount || 0)
     totalRevenue += Number(f.amount || 0)
   }
   stats.deliveryFee = deliveryFee.toFixed(2)
+  stats.storageFee = storageFee.toFixed(2)
+  stats.returnFee = returnFee.toFixed(2)
   stats.totalRevenue = totalRevenue.toFixed(2)
 
   const companyMap = {}
   for (const o of orders) {
     const key = o.company
-    if (!companyMap[key]) companyMap[key] = { company: key, in_count: 0, out_count: 0, stay_count: 0, overdue_count: 0, revenue: 0 }
+    if (!companyMap[key]) companyMap[key] = { company: key, in_count: 0, out_count: 0, stay_count: 0, overdue_count: 0, delivery_revenue: 0, storage_revenue: 0, return_revenue: 0, revenue: 0 }
     if (inRange(o.in_time)) companyMap[key].in_count++
     if (inRange(o.pickup_time)) companyMap[key].out_count++
     if (o.status === 'arrived') companyMap[key].stay_count++
@@ -281,7 +315,11 @@ async function loadReport() {
   }
   for (const f of finRecords) {
     if (f.company && companyMap[f.company]) {
-      companyMap[f.company].revenue += Number(f.amount || 0)
+      const amt = Number(f.amount || 0)
+      if (f.type === 'delivery') companyMap[f.company].delivery_revenue += amt
+      else if (f.type === 'storage') companyMap[f.company].storage_revenue += amt
+      else if (f.type === 'return_fee') companyMap[f.company].return_revenue += amt
+      companyMap[f.company].revenue += amt
     }
   }
   companyStats.value = Object.values(companyMap)
@@ -394,19 +432,21 @@ function exportPDF() {
       ['入库总量', stats.inCount, '出库总量', stats.outCount],
       ['滞留件数', stats.stayCount, '超时率', stats.overdueRate + '%'],
       ['滞留率', stats.stayRate + '%', '平均取件时长', stats.avgPickupHours + 'h'],
-      ['派费收入', '¥' + stats.deliveryFee, '总营收', '¥' + stats.totalRevenue]
+      ['派费收入', '¥' + stats.deliveryFee, '保管费收入', '¥' + stats.storageFee],
+      ['退件费收入', '¥' + stats.returnFee, '总营收', '¥' + stats.totalRevenue]
     ],
     headStyles: { fillColor: [64, 158, 255] }
   })
 
-  const finalY = (doc.lastAutoTable?.finalY || 120) + 10
+  const finalY = (doc.lastAutoTable?.finalY || 130) + 10
   doc.text('二、快递公司统计明细', 14, finalY)
   autoTable(doc, {
     startY: finalY + 6,
-    head: [['快递公司', '入库', '出库', '在库', '超时', '超时率%', '滞留率%', '营收¥']],
+    head: [['快递公司', '入库', '出库', '在库', '超时', '超时率%', '滞留率%', '派费¥', '保管费¥', '退件费¥', '合计¥']],
     body: companyStats.value.map(x => [
       x.company, x.in_count, x.out_count, x.stay_count, x.overdue_count,
-      x.overdue_rate.toFixed(1), x.stay_rate.toFixed(1), x.revenue.toFixed(2)
+      x.overdue_rate.toFixed(1), x.stay_rate.toFixed(1),
+      x.delivery_revenue.toFixed(2), x.storage_revenue.toFixed(2), x.return_revenue.toFixed(2), x.revenue.toFixed(2)
     ]),
     headStyles: { fillColor: [103, 194, 58] }
   })

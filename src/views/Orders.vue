@@ -169,9 +169,7 @@ const isUser = computed(() => userStore.user?.role === 'user')
 const currentUserPhone = computed(() => userStore.user?.phone || '')
 const currentUserCompany = computed(() => {
   if (isCourier.value) {
-    const name = userStore.user?.real_name || ''
-    const courierCompanyMap = { '快递员张': '顺丰速运' }
-    return courierCompanyMap[name] || ''
+    return userStore.user?.company || ''
   }
   return ''
 })
