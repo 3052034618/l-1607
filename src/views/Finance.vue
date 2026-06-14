@@ -163,18 +163,25 @@ const pageSize = ref(20)
 const total = ref(0)
 
 async function loadSummary() {
-  let where = ['1=1']
-  let params = []
+  let startDate = ''
+  let endDate = ''
   if (dateRange.value && dateRange.value.length === 2) {
-    where.push('DATE(created_at) BETWEEN ? AND ?')
-    params.push(dateRange.value[0].toISOString().split('T')[0], dateRange.value[1].toISOString().split('T')[0])
+    startDate = dateRange.value[0].toISOString().split('T')[0]
+    endDate = dateRange.value[1].toISOString().split('T')[0]
   }
 
-  const sql = `SELECT * FROM financial_records WHERE ${where.join(' AND ')}`
-  const r = await db.query(sql, params)
+  const sql = `SELECT * FROM financial_records`
+  const r = await db.query(sql, [])
   if (r.success && r.data) {
+    const filtered = r.data.filter(item => {
+      if (!startDate || !endDate) return true
+      if (!item.created_at) return false
+      const d = item.created_at.split(' ')[0]
+      return d >= startDate && d <= endDate
+    })
+
     const map = {}
-    for (const item of r.data) {
+    for (const item of filtered) {
       const key = item.company || '退件费'
       if (!map[key]) {
         map[key] = {
@@ -230,24 +237,33 @@ async function loadRecords() {
   let where = ['1=1']
   let params = []
   if (typeFilter.value) { where.push('type = ?'); params.push(typeFilter.value) }
-  if (searchKey.value.trim()) {
-    where.push('(order_id IN (SELECT id FROM express_orders WHERE waybill_no LIKE ?))')
-    params.push('%' + searchKey.value.trim() + '%')
-  }
+
+  let startDate = ''
+  let endDate = ''
   if (detailDate.value && detailDate.value.length === 2) {
-    where.push('DATE(created_at) BETWEEN ? AND ?')
-    params.push(detailDate.value[0].toISOString().split('T')[0], detailDate.value[1].toISOString().split('T')[0])
+    startDate = detailDate.value[0].toISOString().split('T')[0]
+    endDate = detailDate.value[1].toISOString().split('T')[0]
   }
 
-  const countSql = `SELECT COUNT(*) as cnt FROM financial_records WHERE ${where.join(' AND ')}`
-  const cr = await db.query(countSql, params)
-  if (cr.success) total.value = cr.data[0].cnt
+  const waybillLike = searchKey.value.trim() ? '%' + searchKey.value.trim() + '%' : ''
 
-  const offset = (page.value - 1) * pageSize.value
-  const sql = `SELECT * FROM financial_records WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-  params.push(pageSize.value, offset)
-  const r = await db.query(sql, params)
-  if (r.success) records.value = r.data
+  let sql = `SELECT fr.*, o.waybill_no FROM financial_records fr LEFT JOIN express_orders o ON fr.order_id = o.id WHERE ${where.join(' AND ')}`
+  if (waybillLike) {
+    sql = `SELECT fr.*, o.waybill_no FROM financial_records fr LEFT JOIN express_orders o ON fr.order_id = o.id WHERE ${where.join(' AND ')} AND o.waybill_no LIKE ?`
+    params.push(waybillLike)
+  }
+  const allR = await db.query(sql, params)
+  if (allR.success && allR.data) {
+    const dateFiltered = allR.data.filter(item => {
+      if (!startDate || !endDate) return true
+      if (!item.created_at) return false
+      const d = item.created_at.split(' ')[0]
+      return d >= startDate && d <= endDate
+    })
+    total.value = dateFiltered.length
+    const offset = (page.value - 1) * pageSize.value
+    records.value = dateFiltered.slice(offset, offset + pageSize.value)
+  }
 }
 
 async function exportSettlement() {

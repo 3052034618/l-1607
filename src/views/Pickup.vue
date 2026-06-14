@@ -190,7 +190,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElNotification, ElMessageBox } from 'element-plus'
 import { Search, Check, Lock, Setting } from '@element-plus/icons-vue'
 import db from '@/api/db'
-import { formatDateTime, getOrderStatusLabel, getOrderStatusType, calculateStorageFee } from '@/utils'
+import { formatDateTime, getOrderStatusLabel, getOrderStatusType, calculateStorageFee, runOverdueCheck } from '@/utils'
 import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
@@ -198,6 +198,14 @@ const isAdmin = computed(() => userStore.isAdmin)
 const isCourier = computed(() => userStore.user?.role === 'courier')
 const isUser = computed(() => userStore.user?.role === 'user')
 const currentUserPhone = computed(() => userStore.user?.phone || '')
+const currentUserCompany = computed(() => {
+  if (isCourier.value) {
+    const name = userStore.user?.real_name || ''
+    const courierCompanyMap = { '快递员张': '顺丰速运' }
+    return courierCompanyMap[name] || ''
+  }
+  return ''
+})
 
 const step = ref(1)
 const searchInput = ref('')
@@ -222,17 +230,17 @@ function getDataFilterSQL() {
   if (isUser.value && currentUserPhone.value) {
     return " AND o.receiver_phone = '" + currentUserPhone.value + "'"
   }
+  if (isCourier.value && currentUserCompany.value) {
+    return " AND o.company = '" + currentUserCompany.value + "'"
+  }
   return ''
 }
 
 async function loadRecords() {
   const today = new Date().toISOString().split('T')[0]
-  let extraFilter = ''
-  if (isUser.value && currentUserPhone.value) {
-    extraFilter = " AND o.receiver_phone = '" + currentUserPhone.value + "'"
-  }
+  const extraFilter = getDataFilterSQL()
   const r = await db.query(`
-    SELECT pr.*, o.waybill_no 
+    SELECT pr.*, o.waybill_no, o.company, o.receiver_phone 
     FROM pickup_records pr 
     LEFT JOIN express_orders o ON pr.order_id = o.id 
     WHERE DATE(pr.attempt_time) = ? ${extraFilter}
@@ -243,10 +251,11 @@ async function loadRecords() {
 
 async function simulateScan() {
   scanning.value = true
-  const phoneFilter = isUser.value && currentUserPhone.value
-    ? " AND receiver_phone = '" + currentUserPhone.value + "'"
-    : ''
-  const r = await db.query("SELECT waybill_no FROM express_orders WHERE status = 'arrived'" + phoneFilter + " LIMIT 1")
+  const extraFilter = getDataFilterSQL()
+  const r = await db.query(`
+    SELECT waybill_no FROM express_orders o 
+    WHERE status = 'arrived' ${extraFilter} LIMIT 1
+  `)
   setTimeout(() => {
     scanning.value = false
     if (r.success && r.data && r.data.length > 0) {
@@ -270,25 +279,27 @@ async function searchPackage() {
   pickupCodeInput.value = ''
 
   try {
+    await runOverdueCheck(db)
     const waybill = searchInput.value.trim()
-    let phoneFilter = ''
-    if (isUser.value && currentUserPhone.value) {
-      phoneFilter = " AND o.receiver_phone = '" + currentUserPhone.value + "'"
-    }
+    const extraFilter = getDataFilterSQL()
     const r = await db.query(`
       SELECT o.*, l.code as locker_code, l.zone 
       FROM express_orders o 
       LEFT JOIN lockers l ON o.locker_id = l.id 
-      WHERE o.waybill_no = ? ${phoneFilter}
+      WHERE o.waybill_no = ? ${extraFilter}
     `, [waybill])
 
     if (!r.success || !r.data || r.data.length === 0) {
-      verifyResult.value = { success: false, message: isUser.value ? '未找到该包裹（或不属于您），请检查运单号' : '运单号不存在，请检查后重试' }
+      let msg = '运单号不存在，请检查后重试'
+      if (isUser.value) msg = '未找到该包裹（或不属于您），请检查运单号'
+      else if (isCourier.value) msg = '未找到该包裹（或不属于您的承运公司），请检查运单号'
+      verifyResult.value = { success: false, message: msg }
       searching.value = false
       return
     }
 
     const order = r.data[0]
+    order.storage_fee = Number(order.storage_fee || 0)
     if (order.locked) {
       currentOrder.value = order
       verifyResult.value = { success: false, message: `该包裹已被锁定，请联系管理员处理（连续错误3次）` }
@@ -301,8 +312,6 @@ async function searchPackage() {
       return
     }
 
-    const fee = calculateStorageFee(order.in_time)
-    order.storage_fee = fee
     currentOrder.value = order
     step.value = 2
     verifyResult.value = { success: true, message: '找到包裹，请输入取件码进行核验' }
@@ -410,7 +419,7 @@ async function confirmPickup() {
   try {
     await ElMessageBox.confirm(
       currentOrder.value.storage_fee > 0
-        ? `确认取件？需收取保管费 ¥${currentOrder.value.storage_fee.toFixed(2)}`
+        ? `确认取件？需收取保管费 ¥${Number(currentOrder.value.storage_fee).toFixed(2)}`
         : '确认取件？格口将自动解锁',
       '确认取件',
       { type: 'warning' }
@@ -422,31 +431,37 @@ async function confirmPickup() {
   pickingUp.value = true
 
   try {
-    const order = currentOrder.value
+    await runOverdueCheck(db)
+    const orderId = currentOrder.value.id
+
+    const latestR = await db.query(`
+      SELECT storage_fee, company, locker_id, pickup_code, waybill_no, in_time
+      FROM express_orders WHERE id = ?
+    `, [orderId])
+    const latestOrder = latestR.data[0]
+    const finalStorageFee = Number(latestOrder.storage_fee || 0)
 
     await db.query(`
       UPDATE express_orders 
-      SET status = 'picked_up', pickup_time = datetime('now'), storage_fee = ?, failed_attempts = 0, locked = 0
+      SET status = 'picked_up', pickup_time = datetime('now'), failed_attempts = 0, locked = 0
       WHERE id = ?
-    `, [order.storage_fee, order.id])
+    `, [orderId])
 
-    await db.query("UPDATE lockers SET status = 'empty' WHERE id = ?", [order.locker_id])
+    if (latestOrder.locker_id) {
+      await db.query("UPDATE lockers SET status = 'empty' WHERE id = ?", [latestOrder.locker_id])
+    }
 
     await db.query(`
-      INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success)
-      VALUES (?, ?, 'code', 1)
-    `, [order.id, order.pickup_code])
-
-    if (order.storage_fee > 0) {
-      await db.query(`
-        INSERT INTO financial_records (order_id, type, company, amount, description)
-        VALUES (?, 'storage', ?, ?, '超时保管费收入')
-      `, [order.id, order.company, order.storage_fee])
-    }
+      INSERT INTO pickup_records (order_id, pickup_code, pickup_type, success, message)
+      VALUES (?, ?, 'code', 1, ?)
+    `, [orderId, latestOrder.pickup_code,
+      finalStorageFee > 0
+        ? `取件完成，收取保管费¥${finalStorageFee.toFixed(2)}`
+        : '取件完成'])
 
     ElNotification({
       title: '取件成功',
-      message: `格口 ${order.locker_code} 已解锁，欢迎再次使用！`,
+      message: `格口已解锁，欢迎再次使用！${finalStorageFee > 0 ? '（保管费¥' + finalStorageFee.toFixed(2) + '）' : ''}`,
       type: 'success'
     })
 
@@ -498,6 +513,7 @@ async function unlockOrder() {
 }
 
 async function searchOrders() {
+  await runOverdueCheck(db)
   const baseSQL = `
     SELECT o.*, l.code as locker_code, l.zone 
     FROM express_orders o 
@@ -515,11 +531,12 @@ async function searchOrders() {
   }
   const r = await db.query(sql, params)
   if (r.success && r.data) {
-    searchResults.value = r.data.map(o => ({ ...o, storage_fee: calculateStorageFee(o.in_time) }))
+    searchResults.value = r.data.map(o => ({ ...o, storage_fee: Number(o.storage_fee || 0) }))
   }
 }
 
 onMounted(async () => {
+  await runOverdueCheck(db)
   await loadRecords()
   await searchOrders()
 })

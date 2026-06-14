@@ -411,6 +411,22 @@ function exportPDF() {
     headStyles: { fillColor: [103, 194, 58] }
   })
 
+  const finalY2 = (doc.lastAutoTable?.finalY || 180) + 10
+  doc.text('三、包裹尺寸分布统计', 14, finalY2)
+  const sizeTotal = (sizeStats.small || 0) + (sizeStats.medium || 0) + (sizeStats.large || 0) + (sizeStats.xlarge || 0)
+  autoTable(doc, {
+    startY: finalY2 + 6,
+    head: [['尺寸分类', '件数', '占比%', '说明']],
+    body: [
+      ['小号(S)', sizeStats.small || 0, sizeTotal ? ((sizeStats.small || 0) / sizeTotal * 100).toFixed(1) : '0.0', '适用于小型物品，如衣物、文件'],
+      ['中号(M)', sizeStats.medium || 0, sizeTotal ? ((sizeStats.medium || 0) / sizeTotal * 100).toFixed(1) : '0.0', '适用于普通日用品、包装'],
+      ['大号(L)', sizeStats.large || 0, sizeTotal ? ((sizeStats.large || 0) / sizeTotal * 100).toFixed(1) : '0.0', '适用于大件家电、箱包'],
+      ['超大号(XL)', sizeStats.xlarge || 0, sizeTotal ? ((sizeStats.xlarge || 0) / sizeTotal * 100).toFixed(1) : '0.0', '适用于超大或超重包裹'],
+      ['合计', sizeTotal, '100.0', '统计口径：周期内入库的所有包裹']
+    ],
+    headStyles: { fillColor: [230, 162, 60] }
+  })
+
   doc.save(`运营报表_${dateStr.replace(/\//g, '-')}.pdf`)
   ElMessage.success('PDF报表导出成功')
 }

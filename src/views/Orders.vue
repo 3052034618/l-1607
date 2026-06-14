@@ -216,23 +216,40 @@ async function loadList() {
       where.push('o.status = ?')
       params.push(statusFilter.value)
     }
+
+    let startDate = ''
+    let endDate = ''
     if (dateRange.value && dateRange.value.length === 2) {
-      where.push('DATE(o.created_at) BETWEEN ? AND ?')
-      params.push(dateRange.value[0].toISOString().split('T')[0], dateRange.value[1].toISOString().split('T')[0])
+      startDate = dateRange.value[0].toISOString().split('T')[0]
+      endDate = dateRange.value[1].toISOString().split('T')[0]
     }
 
     const dataFilter = getDataFilterSQL()
     const baseSQL = ` FROM express_orders o LEFT JOIN lockers l ON o.locker_id = l.id WHERE ${where.join(' AND ')}${dataFilter}`
 
-    const countSql = `SELECT COUNT(*) as cnt` + baseSQL
-    const countR = await db.query(countSql, params)
-    if (countR.success && countR.data && countR.data.length > 0) total.value = countR.data[0].cnt || 0
+    const allCountSql = `SELECT o.created_at, o.id` + baseSQL
+    const allCountR = await db.query(allCountSql, params)
 
-    const offset = (page.value - 1) * pageSize.value
-    const sql = `SELECT o.*, l.code as locker_code, l.zone` + baseSQL + ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`
-    params.push(pageSize.value, offset)
-    const r = await db.query(sql, params)
-    if (r.success) orders.value = r.data
+    if (allCountR.success && allCountR.data) {
+      const dateFiltered = allCountR.data.filter(row => {
+        if (!startDate || !endDate) return true
+        if (!row.created_at) return false
+        const d = row.created_at.split(' ')[0]
+        return d >= startDate && d <= endDate
+      })
+      total.value = dateFiltered.length
+      const validIds = new Set(dateFiltered.map(r => r.id))
+
+      const offset = (page.value - 1) * pageSize.value
+      const sql = `SELECT o.*, l.code as locker_code, l.zone` + baseSQL + ` ORDER BY o.created_at DESC`
+      const r = await db.query(sql, params)
+      if (r.success && r.data) {
+        const paged = r.data
+          .filter(row => validIds.has(row.id))
+          .slice(offset, offset + pageSize.value)
+        orders.value = paged
+      }
+    }
   } finally {
     loading.value = false
   }
