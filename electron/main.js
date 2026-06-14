@@ -37,9 +37,18 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-const db = require('./database')
+let db = null
+try {
+  db = require('./database')
+} catch (err) {
+  console.log('[Electron Main] 加载数据库模块失败，将使用前端 localStorage 模式:', err.message)
+  db = null
+}
 
 ipcMain.handle('db:query', (event, sql, params = []) => {
+  if (!db) {
+    return { success: false, error: 'NO_SQLITE', useFallback: true }
+  }
   try {
     const stmt = db.prepare(sql)
     if (sql.trim().toUpperCase().startsWith('SELECT')) {
@@ -54,6 +63,9 @@ ipcMain.handle('db:query', (event, sql, params = []) => {
 })
 
 ipcMain.handle('db:exec', (event, sql) => {
+  if (!db) {
+    return { success: false, error: 'NO_SQLITE', useFallback: true }
+  }
   try {
     db.exec(sql)
     return { success: true }

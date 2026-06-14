@@ -433,7 +433,6 @@ function doUpdate(parsed, params) {
       else if (!isNaN(parseFloat(val))) val = parseFloat(val)
       sets.push({ field: m[1], value: val })
     }
-    if (m && m[2].trim() === '?') pi++
   }
   
   const updatePi = countParams(parsed.setStr)

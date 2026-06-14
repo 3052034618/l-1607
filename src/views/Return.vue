@@ -32,18 +32,35 @@
                 v-model="applyForm.window"
                 type="datetimerange"
                 range-separator="至"
-                start-placeholder="开始时间"
-                end-placeholder="结束时间"
+                start-placeholder="开始时间（不填则自动安排）"
+                end-placeholder="结束时间（不填则自动安排）"
                 style="width: 100%;"
               />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" size="large" @click="submitReturn">
+              <el-button type="primary" size="large" @click="submitReturn" :loading="submitting">
                 <el-icon><Check /></el-icon>
-                提交退件申请
+                提交退件申请（系统自动分配快递员）
               </el-button>
             </el-form-item>
           </el-form>
+
+          <el-alert
+            v-if="lastAssigned"
+            type="success"
+            show-icon
+            :closable="false"
+            style="margin-top: 16px;"
+          >
+            <template #title>
+              退件申请提交成功！退运单号：{{ lastAssigned.return_waybill }}
+            </template>
+            <div style="margin-top: 8px;">
+              <p>快递员：<strong>{{ lastAssigned.courier_name }}</strong>（{{ lastAssigned.courier_company }}） 电话：{{ lastAssigned.courier_phone }}</p>
+              <p>上门时间：{{ formatDateTime(lastAssigned.pickup_window_start) }} ~ {{ formatDateTime(lastAssigned.pickup_window_end) }}</p>
+              <p>退件费：¥{{ lastAssigned.fee.toFixed(2) }}</p>
+            </div>
+          </el-alert>
         </div>
       </el-tab-pane>
 
@@ -66,9 +83,9 @@
             <el-table-column prop="user_name" label="申请人" width="100" />
             <el-table-column prop="user_phone" label="联系电话" width="130" />
             <el-table-column prop="reason" label="退件原因" width="140" />
-            <el-table-column label="快递员" width="100">
+            <el-table-column label="快递员" width="140">
               <template #default="{ row }">
-                <span v-if="row.courier_name">{{ row.courier_name }}</span>
+                <span v-if="row.courier_name">{{ row.courier_name }}（{{ row.courier_company }}）</span>
                 <el-tag v-else size="small" type="info">待分配</el-tag>
               </template>
             </el-table-column>
@@ -95,69 +112,43 @@
             </el-table-column>
             <el-table-column label="操作" width="260" fixed="right">
               <template #default="{ row }">
-                <el-button v-if="row.status === 'pending'" link type="primary" size="small" @click="assignCourier(row)">分配快递员</el-button>
-                <el-button v-if="row.status === 'pending'" link type="success" size="small" @click="markStatus(row, 'picked')">标记已取件</el-button>
-                <el-button v-if="row.status === 'picked'" link type="success" size="small" @click="markStatus(row, 'shipped')">标记已寄出</el-button>
-                <el-button v-if="row.status === 'shipped'" link type="success" size="small" @click="markStatus(row, 'completed')">标记完成</el-button>
-                <el-button v-if="row.status === 'pending'" link type="danger" size="small" @click="markStatus(row, 'cancelled')">取消</el-button>
+                <el-button v-if="(isAdmin || isCourier) && row.status === 'pending'" link type="success" size="small" @click="markStatus(row, 'picked')">标记已取件</el-button>
+                <el-button v-if="(isAdmin || isCourier) && row.status === 'picked'" link type="success" size="small" @click="markStatus(row, 'shipped')">标记已寄出</el-button>
+                <el-button v-if="(isAdmin || isCourier) && row.status === 'shipped'" link type="success" size="small" @click="markStatus(row, 'completed')">标记完成</el-button>
+                <el-button v-if="(isAdmin || isCourier) && row.status === 'pending'" link type="danger" size="small" @click="markStatus(row, 'cancelled')">取消</el-button>
               </template>
             </el-table-column>
           </el-table>
         </div>
       </el-tab-pane>
     </el-tabs>
-
-    <el-dialog v-model="courierVisible" title="分配快递员" width="480px">
-      <el-form label-width="100px">
-        <el-form-item label="当前退件">
-          <el-tag type="info" size="large">{{ currentReturn?.return_waybill }}</el-tag>
-        </el-form-item>
-        <el-form-item label="选择快递员">
-          <el-select v-model="selectedCourierId" style="width: 100%;" size="large" placeholder="请选择快递员">
-            <el-option
-              v-for="c in couriers"
-              :key="c.id"
-              :label="`${c.name} - ${c.phone} (${c.company})`"
-              :value="c.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="取件时间窗口">
-          <el-date-picker
-            v-model="courierWindow"
-            type="datetimerange"
-            range-separator="至"
-            start-placeholder="开始时间"
-            end-placeholder="结束时间"
-            style="width: 100%;"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="courierVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmAssign">确认分配</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check } from '@element-plus/icons-vue'
 import db from '@/api/db'
 import { getReturnStatusLabel, formatDateTime, generateWaybillNo } from '@/utils'
+import { useUserStore } from '@/store/user'
+import dayjs from 'dayjs'
+
+const userStore = useUserStore()
+const isAdmin = computed(() => userStore.isAdmin)
+const isCourier = computed(() => userStore.user?.role === 'courier')
+const isUser = computed(() => userStore.user?.role === 'user')
+const currentUserPhone = computed(() => userStore.user?.phone || '')
+const currentUserId = computed(() => userStore.user?.id)
 
 const activeTab = ref('list')
 const returns = ref([])
 const loading = ref(false)
 const statusFilter = ref('')
+const submitting = ref(false)
+const lastAssigned = ref(null)
 
 const couriers = ref([])
-const courierVisible = ref(false)
-const currentReturn = ref(null)
-const selectedCourierId = ref(null)
-const courierWindow = ref([])
 
 const applyForm = reactive({
   original_waybill: '',
@@ -167,6 +158,11 @@ const applyForm = reactive({
   reason: '',
   window: []
 })
+
+if (isUser.value) {
+  applyForm.user_name = userStore.user?.real_name || ''
+  applyForm.user_phone = currentUserPhone.value
+}
 
 function getReturnStatusType(status) {
   const map = {
@@ -179,6 +175,13 @@ function getReturnStatusType(status) {
   return map[status] || 'info'
 }
 
+function getDataFilterSQL() {
+  if (isUser.value && currentUserPhone.value) {
+    return " AND r.user_phone = '" + currentUserPhone.value + "'"
+  }
+  return ''
+}
+
 async function loadReturns() {
   loading.value = true
   let where = ['1=1']
@@ -187,11 +190,12 @@ async function loadReturns() {
     where.push('r.status = ?')
     params.push(statusFilter.value)
   }
+  const dataFilter = getDataFilterSQL()
   const sql = `
     SELECT r.*, c.name as courier_name, c.phone as courier_phone, c.company as courier_company
     FROM return_orders r
     LEFT JOIN couriers c ON r.courier_id = c.id
-    WHERE ${where.join(' AND ')}
+    WHERE ${where.join(' AND ')}${dataFilter}
     ORDER BY r.created_at DESC
   `
   const r = await db.query(sql, params)
@@ -204,65 +208,81 @@ async function loadCouriers() {
   if (r.success) couriers.value = r.data
 }
 
+function autoPickCourierAndWindow(originalCompany) {
+  let matchedCourier = couriers.value.find(c => c.company === originalCompany)
+  if (!matchedCourier && couriers.value.length > 0) {
+    matchedCourier = couriers.value[Math.floor(Math.random() * couriers.value.length)]
+  }
+
+  let windowStart, windowEnd
+  if (applyForm.window && applyForm.window.length === 2) {
+    windowStart = applyForm.window[0].toISOString().replace('T', ' ').slice(0, 19)
+    windowEnd = applyForm.window[1].toISOString().replace('T', ' ').slice(0, 19)
+  } else {
+    const tomorrow = dayjs().add(1, 'day')
+    windowStart = tomorrow.hour(9).minute(0).second(0).format('YYYY-MM-DD HH:mm:ss')
+    windowEnd = tomorrow.hour(12).minute(0).second(0).format('YYYY-MM-DD HH:mm:ss')
+  }
+
+  return { courier: matchedCourier, windowStart, windowEnd }
+}
+
 async function submitReturn() {
   if (!applyForm.original_waybill || !applyForm.user_name || !applyForm.user_phone || !applyForm.reason) {
     ElMessage.warning('请填写必要信息')
     return
   }
-  const returnWaybill = 'RT' + generateWaybillNo().slice(2)
-  const fee = 8
+  submitting.value = true
+  lastAssigned.value = null
 
-  let windowStart = null, windowEnd = null
-  if (applyForm.window && applyForm.window.length === 2) {
-    windowStart = applyForm.window[0].toISOString().replace('T', ' ').slice(0, 19)
-    windowEnd = applyForm.window[1].toISOString().replace('T', ' ').slice(0, 19)
-  }
+  try {
+    const returnWaybill = 'RT' + generateWaybillNo().slice(2)
+    const fee = 8
 
-  const r = await db.query(`
-    INSERT INTO return_orders
-    (original_waybill, return_waybill, user_name, user_phone, reason, pickup_address, pickup_window_start, pickup_window_end, fee)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [applyForm.original_waybill, returnWaybill, applyForm.user_name, applyForm.user_phone, applyForm.reason, applyForm.pickup_address, windowStart, windowEnd, fee])
+    let originalCompany = ''
+    const orderR = await db.query('SELECT company FROM express_orders WHERE waybill_no = ? LIMIT 1', [applyForm.original_waybill])
+    if (orderR.success && orderR.data && orderR.data.length > 0) {
+      originalCompany = orderR.data[0].company || ''
+    }
 
-  if (r.success) {
-    ElMessage.success('申请已提交，退件单号：' + returnWaybill)
-    Object.assign(applyForm, {
-      original_waybill: '', user_name: '', user_phone: '', pickup_address: '', reason: '', window: []
-    })
-    activeTab.value = 'list'
-    loadReturns()
-  } else {
-    ElMessage.error('提交失败：' + r.error)
-  }
-}
+    const { courier, windowStart, windowEnd } = autoPickCourierAndWindow(originalCompany)
+    const courierId = courier ? courier.id : null
+    const courierCompany = courier ? courier.company : originalCompany
 
-function assignCourier(row) {
-  currentReturn.value = row
-  selectedCourierId.value = null
-  courierWindow.value = []
-  courierVisible.value = true
-}
+    const r = await db.query(`
+      INSERT INTO return_orders
+      (original_waybill, return_waybill, user_name, user_phone, reason, pickup_address, courier_id, pickup_window_start, pickup_window_end, fee)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [applyForm.original_waybill, returnWaybill, applyForm.user_name, applyForm.user_phone, applyForm.reason, applyForm.pickup_address, courierId, windowStart, windowEnd, fee])
 
-async function confirmAssign() {
-  if (!selectedCourierId.value) {
-    ElMessage.warning('请选择快递员')
-    return
-  }
-  let windowStart = null, windowEnd = null
-  if (courierWindow.value && courierWindow.value.length === 2) {
-    windowStart = courierWindow.value[0].toISOString().replace('T', ' ').slice(0, 19)
-    windowEnd = courierWindow.value[1].toISOString().replace('T', ' ').slice(0, 19)
-  }
-  const r = await db.query(
-    'UPDATE return_orders SET courier_id = ?, pickup_window_start = ?, pickup_window_end = ? WHERE id = ?',
-    [selectedCourierId.value, windowStart, windowEnd, currentReturn.value.id]
-  )
-  if (r.success) {
-    ElMessage.success('已分配快递员')
-    courierVisible.value = false
-    loadReturns()
-  } else {
-    ElMessage.error('分配失败：' + r.error)
+    if (r.success) {
+      lastAssigned.value = {
+        return_waybill: returnWaybill,
+        courier_name: courier ? courier.name : '待分配',
+        courier_company: courierCompany || '系统调度',
+        courier_phone: courier ? courier.phone : '-',
+        pickup_window_start: windowStart,
+        pickup_window_end: windowEnd,
+        fee: fee
+      }
+      ElMessage.success('申请已提交，系统已自动分配快递员！退件单号：' + returnWaybill)
+      Object.assign(applyForm, {
+        original_waybill: '', pickup_address: '', reason: '', window: []
+      })
+      if (isUser.value) {
+        applyForm.user_name = userStore.user?.real_name || ''
+        applyForm.user_phone = currentUserPhone.value
+      } else {
+        applyForm.user_name = ''
+        applyForm.user_phone = ''
+      }
+      activeTab.value = 'list'
+      loadReturns()
+    } else {
+      ElMessage.error('提交失败：' + r.error)
+    }
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -270,10 +290,17 @@ async function markStatus(row, status) {
   const r = await db.query('UPDATE return_orders SET status = ? WHERE id = ?', [status, row.id])
   if (r.success) {
     if (status === 'completed') {
+      let company = row.courier_company || ''
+      if (!company && row.original_waybill) {
+        const orderR = await db.query('SELECT company FROM express_orders WHERE waybill_no = ? LIMIT 1', [row.original_waybill])
+        if (orderR.success && orderR.data && orderR.data.length > 0) {
+          company = orderR.data[0].company || ''
+        }
+      }
       await db.query(`
-        INSERT INTO financial_records (order_id, type, amount, description)
-        VALUES (?, 'return_fee', ?, '退件费收入')
-      `, [row.id, row.fee])
+        INSERT INTO financial_records (order_id, type, company, amount, description)
+        VALUES (?, 'return_fee', ?, ?, '退件费收入')
+      `, [row.id, company, row.fee])
     }
     ElMessage.success('状态已更新')
     loadReturns()

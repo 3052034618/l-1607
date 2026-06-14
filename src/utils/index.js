@@ -82,3 +82,64 @@ export function formatDateTime(dt) {
 export function formatDate(dt) {
   return dayjs(dt).format('YYYY-MM-DD')
 }
+
+export async function runOverdueCheck(db) {
+  if (!db || !db.query) return { processed: 0, fees: 0, notifs: 0 }
+
+  try {
+    const r = await db.query(`
+      SELECT o.*, l.code as locker_code, l.zone 
+      FROM express_orders o 
+      LEFT JOIN lockers l ON o.locker_id = l.id 
+      WHERE o.status = 'arrived' AND o.in_time IS NOT NULL
+    `)
+    if (!r.success || !r.data) return { processed: 0, fees: 0, notifs: 0 }
+
+    let feeCount = 0
+    let notifCount = 0
+    const todayStr = dayjs().format('YYYY-MM-DD')
+
+    for (const order of r.data) {
+      const realFee = calculateStorageFee(order.in_time)
+      const currentFee = Number(order.storage_fee || 0)
+      const diff = Number((realFee - currentFee).toFixed(2))
+
+      if (diff > 0) {
+        await db.query('UPDATE express_orders SET storage_fee = ? WHERE id = ?', [realFee, order.id])
+        await db.query(`
+          INSERT INTO financial_records (order_id, type, company, amount, description)
+          VALUES (?, 'storage', ?, ?, '超时保管费累计（第' + Math.ceil((dayjs().diff(dayjs(order.in_time), 'hour') - 48) / 24) + '天）')
+        `, [order.id, order.company, diff])
+        feeCount++
+      }
+
+      const notified = Number(order.notified || 0)
+      if (realFee > 0 && notified < 10) {
+        const lastNotifR = await db.query(`
+          SELECT id FROM notifications 
+          WHERE order_id = ? AND DATE(sent_at) = ? AND type = 'reminder'
+          LIMIT 1
+        `, [order.id, todayStr])
+        const alreadySentToday = lastNotifR.success && lastNotifR.data && lastNotifR.data.length > 0
+
+        if (!alreadySentToday) {
+          const feeForMsg = realFee
+          const hours = dayjs().diff(dayjs(order.in_time), 'hour')
+          const overdueDays = Math.floor(hours / 24)
+          const content = `【驿站提醒】您的包裹${order.waybill_no}已存放${overdueDays}天，产生保管费¥${feeForMsg.toFixed(2)}，请尽快前往${order.zone || ''}${order.locker_code || ''}取件，取件码：${order.pickup_code}`
+
+          await db.query(`
+            INSERT INTO notifications (order_id, phone, content, type)
+            VALUES (?, ?, ?, 'reminder')
+          `, [order.id, order.receiver_phone, content])
+          await db.query('UPDATE express_orders SET notified = notified + 1 WHERE id = ?', [order.id])
+          notifCount++
+        }
+      }
+    }
+    return { processed: r.data.length, fees: feeCount, notifs: notifCount }
+  } catch (e) {
+    console.warn('runOverdueCheck error:', e.message)
+    return { processed: 0, fees: 0, notifs: 0, error: e.message }
+  }
+}

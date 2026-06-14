@@ -49,18 +49,33 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight, Setting, Menu, Refresh, Warning, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Setting, Menu, Refresh, Warning, User, Plus, Search, Download, Check } from '@element-plus/icons-vue'
 import { useUserStore } from '@/store/user'
-import { getRoleLabel, getRoleType } from '@/utils'
+import { getRoleLabel, getRoleType, runOverdueCheck } from '@/utils'
+import db from '@/api/db'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
 const collapsed = ref(false)
+let overdueTimer = null
+
+onMounted(async () => {
+  setTimeout(async () => {
+    await runOverdueCheck(db)
+  }, 1500)
+  overdueTimer = setInterval(async () => {
+    await runOverdueCheck(db)
+  }, 30 * 60 * 1000)
+})
+
+onUnmounted(() => {
+  if (overdueTimer) clearInterval(overdueTimer)
+})
 
 const allMenus = [
   { path: '/dashboard', title: '首页概览', icon: 'Menu', roles: ['admin', 'courier', 'user'] },

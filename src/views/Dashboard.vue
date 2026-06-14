@@ -131,7 +131,7 @@ async function loadStats() {
   if (r5.success && r5.data) recentOrders.value = r5.data
 }
 
-function initTrendChart() {
+async function initTrendChart() {
   const chart = echarts.init(trendChart.value)
   const days = []
   for (let i = 6; i >= 0; i--) {
@@ -139,40 +139,54 @@ function initTrendChart() {
     d.setDate(d.getDate() - i)
     days.push(d.toISOString().split('T')[0])
   }
+
+  const rAll = await db.query('SELECT in_time, pickup_time FROM express_orders WHERE in_time IS NOT NULL')
+  const allOrders = rAll.success && rAll.data ? rAll.data : []
+  const inData = days.map(d => allOrders.filter(o => o.in_time && o.in_time.split(' ')[0] === d).length)
+  const outData = days.map(d => allOrders.filter(o => o.pickup_time && o.pickup_time.split(' ')[0] === d).length)
   
   chart.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['入库', '出库'] },
     grid: { left: 40, right: 20, top: 40, bottom: 30 },
-    xAxis: { type: 'category', data: days },
+    xAxis: { type: 'category', data: days.map(d => d.slice(5)) },
     yAxis: { type: 'value' },
     series: [
-      { name: '入库', type: 'line', smooth: true, data: [12, 18, 25, 22, 30, 28, 35], itemStyle: { color: '#409eff' } },
-      { name: '出库', type: 'line', smooth: true, data: [10, 15, 20, 24, 28, 25, 30], itemStyle: { color: '#67c23a' } }
+      { name: '入库', type: 'line', smooth: true, data: inData, itemStyle: { color: '#409eff' } },
+      { name: '出库', type: 'line', smooth: true, data: outData, itemStyle: { color: '#67c23a' } }
     ]
   })
 }
 
-function initCompanyChart() {
+async function initCompanyChart() {
   const chart = echarts.init(companyChart.value)
+  const r = await db.query('SELECT company, COUNT(*) as cnt FROM express_orders WHERE company IS NOT NULL GROUP BY company ORDER BY cnt DESC')
+  let data = []
+  if (r.success && r.data) {
+    data = r.data.map(x => ({ name: x.company, value: x.cnt }))
+  }
+  if (data.length === 0) {
+    data = [{ name: '暂无数据', value: 1 }]
+  }
   chart.setOption({
     tooltip: { trigger: 'item' },
+    legend: { orient: 'vertical', right: 10, top: 20 },
     series: [{
       type: 'pie',
       radius: ['40%', '70%'],
-      data: [
-        { value: 35, name: '顺丰速运' },
-        { value: 28, name: '圆通速递' },
-        { value: 25, name: '中通快递' },
-        { value: 20, name: '韵达快递' },
-        { value: 15, name: '其他' }
-      ]
+      data: data
     }]
   })
 }
 
-function initLockerChart() {
+async function initLockerChart() {
   const chart = echarts.init(lockerChart.value)
+  const r = await db.query("SELECT size, COUNT(*) as cnt FROM lockers WHERE status = 'occupied' GROUP BY size")
+  const sizeMap = { small: 0, medium: 0, large: 0, xlarge: 0 }
+  if (r.success && r.data) {
+    r.data.forEach(x => { sizeMap[x.size] = x.cnt })
+  }
+  
   chart.setOption({
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: ['小号', '中号', '大号', '超大号'] },
@@ -180,10 +194,10 @@ function initLockerChart() {
     series: [{
       type: 'bar',
       data: [
-        { value: 8, itemStyle: { color: '#67c23a' } },
-        { value: 14, itemStyle: { color: '#e6a23c' } },
-        { value: 10, itemStyle: { color: '#f56c6c' } },
-        { value: 5, itemStyle: { color: '#909399' } }
+        { value: sizeMap.small, itemStyle: { color: '#67c23a' } },
+        { value: sizeMap.medium, itemStyle: { color: '#e6a23c' } },
+        { value: sizeMap.large, itemStyle: { color: '#f56c6c' } },
+        { value: sizeMap.xlarge, itemStyle: { color: '#909399' } }
       ],
       label: { show: true, position: 'top' }
     }]

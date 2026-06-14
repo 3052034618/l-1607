@@ -187,7 +187,7 @@ const sizeFilter = ref('')
 const statusFilter = ref('')
 
 const editVisible = ref(false)
-const form = reactive({})
+const form = ref({})
 
 const totalLockers = computed(() => lockers.value.length)
 const emptyCount = computed(() => lockers.value.filter(l => l.status === 'empty').length)
@@ -223,32 +223,33 @@ async function loadLockers() {
 }
 
 function showAdd() {
-  Object.assign(form, {
+  form.value = {
     id: null, code: '', zone: 'A区', shelf_no: 'S1', type: 'normal', size: 'medium', status: 'empty'
-  })
+  }
   editVisible.value = true
 }
 
 function showEdit(locker) {
-  Object.assign(form, { ...locker })
+  form.value = { ...locker }
   editVisible.value = true
 }
 
 async function saveLocker() {
-  if (!form.code) {
+  const f = form.value
+  if (!f.code) {
     ElMessage.warning('请输入格口编号')
     return
   }
   let r
-  if (form.id) {
+  if (f.id) {
     r = await db.query(
       'UPDATE lockers SET code=?, zone=?, shelf_no=?, type=?, size=? WHERE id=?',
-      [form.code, form.zone, form.shelf_no, form.type, form.size, form.id]
+      [f.code, f.zone, f.shelf_no, f.type, f.size, f.id]
     )
   } else {
     r = await db.query(
       'INSERT INTO lockers (code, zone, shelf_no, type, size, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [form.code, form.zone, form.shelf_no, form.type, form.size, 'empty']
+      [f.code, f.zone, f.shelf_no, f.type, f.size, 'empty']
     )
   }
   if (r.success) {

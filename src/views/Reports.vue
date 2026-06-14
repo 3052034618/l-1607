@@ -162,6 +162,8 @@ const stats = reactive({
   stayRate: 0, avgPickupHours: 0, deliveryFee: 0, totalRevenue: 0
 })
 const companyStats = ref([])
+const sizeStats = reactive({ small: 0, medium: 0, large: 0, xlarge: 0 })
+const trendData = reactive({ inData: [], outData: [] })
 
 const trendChart = ref(null)
 const pieChart = ref(null)
@@ -290,12 +292,34 @@ async function loadReport() {
       stay_rate: x.in_count ? (x.stay_count / x.in_count) * 100 : 0
     }))
 
+  trendData.inData = xLabels.map((_, idx) => {
+    if (reportType.value === 'monthly') {
+      const dayStr = dateStart.slice(0, 8) + String(idx + 1).padStart(2, '0')
+      return orders.filter(o => inRange(o.in_time) && o.in_time && o.in_time.split(' ')[0] === dayStr).length
+    } else {
+      return orders.filter(o => inRange(o.in_time) && o.in_time && parseInt(o.in_time.split(' ')[1] || '0') === idx).length
+    }
+  })
+  trendData.outData = xLabels.map((_, idx) => {
+    if (reportType.value === 'monthly') {
+      const dayStr = dateStart.slice(0, 8) + String(idx + 1).padStart(2, '0')
+      return orders.filter(o => inRange(o.pickup_time) && o.pickup_time && o.pickup_time.split(' ')[0] === dayStr).length
+    } else {
+      return orders.filter(o => inRange(o.pickup_time) && o.pickup_time && parseInt(o.pickup_time.split(' ')[1] || '0') === idx).length
+    }
+  })
+
+  sizeStats.small = orders.filter(o => inRange(o.in_time) && o.size === 'small').length
+  sizeStats.medium = orders.filter(o => inRange(o.in_time) && o.size === 'medium').length
+  sizeStats.large = orders.filter(o => inRange(o.in_time) && o.size === 'large').length
+  sizeStats.xlarge = orders.filter(o => inRange(o.in_time) && o.size === 'xlarge').length
+
   renderCharts(xLabels)
 }
 
 function renderCharts(xLabels) {
-  const inData = xLabels.map(() => Math.floor(Math.random() * 20 + 5))
-  const outData = xLabels.map((_, i) => Math.max(0, inData[i] - Math.floor(Math.random() * 5)))
+  const inData = trendData.inData.length > 0 ? trendData.inData : xLabels.map(() => 0)
+  const outData = trendData.outData.length > 0 ? trendData.outData : xLabels.map(() => 0)
   trendChartInst?.setOption({
     tooltip: { trigger: 'axis' },
     legend: { data: ['入库', '出库'] },
@@ -313,7 +337,9 @@ function renderCharts(xLabels) {
     legend: { orient: 'vertical', right: 10, top: 20 },
     series: [{
       type: 'pie', radius: ['40%', '70%'], center: ['40%', '50%'],
-      data: companyStats.value.map(x => ({ name: x.company, value: x.in_count }))
+      data: companyStats.value.length > 0
+        ? companyStats.value.map(x => ({ name: x.company, value: x.in_count }))
+        : [{ name: '暂无数据', value: 1 }]
     }]
   })
 
@@ -324,22 +350,27 @@ function renderCharts(xLabels) {
     series: [{
       type: 'bar',
       data: [
-        { value: Math.floor(stats.inCount * 0.25), itemStyle: { color: '#67c23a' } },
-        { value: Math.floor(stats.inCount * 0.4), itemStyle: { color: '#409eff' } },
-        { value: Math.floor(stats.inCount * 0.25), itemStyle: { color: '#e6a23c' } },
-        { value: Math.floor(stats.inCount * 0.1), itemStyle: { color: '#f56c6c' } }
+        { value: sizeStats.small || 0, itemStyle: { color: '#67c23a' } },
+        { value: sizeStats.medium || 0, itemStyle: { color: '#409eff' } },
+        { value: sizeStats.large || 0, itemStyle: { color: '#e6a23c' } },
+        { value: sizeStats.xlarge || 0, itemStyle: { color: '#f56c6c' } }
       ],
       label: { show: true, position: 'top' }
     }]
   })
 
+  const validCompanies = companyStats.value.filter(x => x.company)
   rateChartInst?.setOption({
     tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: companyStats.value.map(x => x.company) },
-    yAxis: { type: 'value', axisLabel: { formatter: '{value}%' }, max: 30 },
+    xAxis: { type: 'category', data: validCompanies.length > 0 ? validCompanies.map(x => x.company) : ['暂无数据'] },
+    yAxis: { type: 'value', axisLabel: { formatter: '{value}%' }, max: 100 },
     series: [
-      { name: '超时率', type: 'line', smooth: true, data: companyStats.value.map(x => x.overdue_rate.toFixed(1)), itemStyle: { color: '#f56c6c' } },
-      { name: '滞留率', type: 'line', smooth: true, data: companyStats.value.map(x => x.stay_rate.toFixed(1)), itemStyle: { color: '#e6a23c' } }
+      { name: '超时率', type: 'line', smooth: true,
+        data: validCompanies.length > 0 ? validCompanies.map(x => Number(x.overdue_rate.toFixed(1))) : [0],
+        itemStyle: { color: '#f56c6c' } },
+      { name: '滞留率', type: 'line', smooth: true,
+        data: validCompanies.length > 0 ? validCompanies.map(x => Number(x.stay_rate.toFixed(1))) : [0],
+        itemStyle: { color: '#e6a23c' } }
     ],
     legend: { data: ['超时率', '滞留率'], top: 0 }
   })

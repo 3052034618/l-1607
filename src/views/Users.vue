@@ -83,7 +83,7 @@ const searchKey = ref('')
 const roleFilter = ref('')
 
 const editVisible = ref(false)
-const form = reactive({})
+const form = ref({})
 
 async function loadList() {
   loading.value = true
@@ -108,27 +108,30 @@ async function loadList() {
 }
 
 function showEdit(row) {
-  Object.assign(form, row || {
-    id: null, username: '', password: '123456', real_name: '', phone: '', role: 'user'
-  })
+  if (row) {
+    form.value = { ...row }
+  } else {
+    form.value = { id: null, username: '', password: '123456', real_name: '', phone: '', role: 'user' }
+  }
   editVisible.value = true
 }
 
 async function saveUser() {
-  if (!form.username || !form.real_name) {
+  const f = form.value
+  if (!f.username || !f.real_name) {
     ElMessage.warning('请填写必要信息')
     return
   }
   let r
-  if (form.id) {
+  if (f.id) {
     r = await db.query(
       'UPDATE users SET real_name = ?, phone = ?, role = ? WHERE id = ?',
-      [form.real_name, form.phone, form.role, form.id]
+      [f.real_name, f.phone, f.role, f.id]
     )
   } else {
     r = await db.query(
       'INSERT INTO users (username, password, real_name, phone, role) VALUES (?, ?, ?, ?, ?)',
-      [form.username, form.password || '123456', form.real_name, form.phone, form.role]
+      [f.username, f.password || '123456', f.real_name, f.phone, f.role]
     )
   }
   if (r.success) {

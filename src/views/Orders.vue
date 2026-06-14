@@ -17,7 +17,7 @@
         查询
       </el-button>
       <el-button @click="resetFilters">重置</el-button>
-      <el-button type="success" @click="showDetail(null)">
+      <el-button type="success" @click="showDetail(null)" v-if="isAdmin || isCourier">
         <el-icon><Plus /></el-icon>
         新增运单
       </el-button>
@@ -46,7 +46,7 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pickup_code" label="取件码" width="90">
+        <el-table-column prop="pickup_code" label="取件码" width="90" v-if="isAdmin || isCourier">
           <template #default="{ row }">
             <span v-if="row.pickup_code" style="letter-spacing: 2px; font-weight: 600;">{{ row.pickup_code }}</span>
             <span v-else>-</span>
@@ -73,9 +73,9 @@
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="showDetail(row)">详情</el-button>
-            <el-button v-if="row.status === 'arrived' && !row.locked" link type="warning" size="small" @click="lockOrder(row)">锁定</el-button>
-            <el-button v-if="row.locked && isAdmin" link type="success" size="small" @click="unlockOrder(row)">解锁</el-button>
-            <el-button v-if="row.status === 'arrived'" link type="danger" size="small" @click="returnOrder(row)">退件</el-button>
+            <el-button v-if="(isAdmin || isCourier) && row.status === 'arrived' && !row.locked" link type="warning" size="small" @click="lockOrder(row)">锁定</el-button>
+            <el-button v-if="isAdmin && row.locked" link type="success" size="small" @click="unlockOrder(row)">解锁</el-button>
+            <el-button v-if="(isAdmin || isCourier) && row.status === 'arrived'" link type="danger" size="small" @click="returnOrder(row)">退件</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -164,6 +164,27 @@ import { useUserStore } from '@/store/user'
 
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.isAdmin)
+const isCourier = computed(() => userStore.user?.role === 'courier')
+const isUser = computed(() => userStore.user?.role === 'user')
+const currentUserPhone = computed(() => userStore.user?.phone || '')
+const currentUserCompany = computed(() => {
+  if (isCourier.value) {
+    const name = userStore.user?.real_name || ''
+    const courierCompanyMap = { '快递员张': '顺丰速运' }
+    return courierCompanyMap[name] || ''
+  }
+  return ''
+})
+
+function getDataFilterSQL() {
+  if (isUser.value && currentUserPhone.value) {
+    return " AND o.receiver_phone = '" + currentUserPhone.value + "'"
+  }
+  if (isCourier.value && currentUserCompany.value) {
+    return " AND o.company = '" + currentUserCompany.value + "'"
+  }
+  return ''
+}
 
 const orders = ref([])
 const loading = ref(false)
@@ -200,19 +221,15 @@ async function loadList() {
       params.push(dateRange.value[0].toISOString().split('T')[0], dateRange.value[1].toISOString().split('T')[0])
     }
 
-    const countSql = `SELECT COUNT(*) as cnt FROM express_orders o WHERE ${where.join(' AND ')}`
+    const dataFilter = getDataFilterSQL()
+    const baseSQL = ` FROM express_orders o LEFT JOIN lockers l ON o.locker_id = l.id WHERE ${where.join(' AND ')}${dataFilter}`
+
+    const countSql = `SELECT COUNT(*) as cnt` + baseSQL
     const countR = await db.query(countSql, params)
-    if (countR.success) total.value = countR.data[0].cnt
+    if (countR.success && countR.data && countR.data.length > 0) total.value = countR.data[0].cnt || 0
 
     const offset = (page.value - 1) * pageSize.value
-    const sql = `
-      SELECT o.*, l.code as locker_code, l.zone 
-      FROM express_orders o 
-      LEFT JOIN lockers l ON o.locker_id = l.id 
-      WHERE ${where.join(' AND ')} 
-      ORDER BY o.created_at DESC
-      LIMIT ? OFFSET ?
-    `
+    const sql = `SELECT o.*, l.code as locker_code, l.zone` + baseSQL + ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`
     params.push(pageSize.value, offset)
     const r = await db.query(sql, params)
     if (r.success) orders.value = r.data
@@ -252,10 +269,18 @@ async function saveDetail() {
   }
   if (!detailForm.pickup_code) detailForm.pickup_code = generatePickupCode()
 
-  const r = await db.query(`
-    INSERT INTO express_orders (waybill_no, company, receiver_name, receiver_phone, receiver_address, size, refrigerated, weight, pickup_code, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_transit')
-  `, [detailForm.waybill_no, detailForm.company, detailForm.receiver_name, detailForm.receiver_phone, detailForm.receiver_address, detailForm.size, detailForm.refrigerated, detailForm.weight, detailForm.pickup_code])
+  let r
+  if (detailForm.id) {
+    r = await db.query(`
+      UPDATE express_orders SET waybill_no = ?, company = ?, receiver_name = ?, receiver_phone = ?, receiver_address = ?, size = ?, refrigerated = ?, weight = ?
+      WHERE id = ?
+    `, [detailForm.waybill_no, detailForm.company, detailForm.receiver_name, detailForm.receiver_phone, detailForm.receiver_address, detailForm.size, detailForm.refrigerated, detailForm.weight, detailForm.id])
+  } else {
+    r = await db.query(`
+      INSERT INTO express_orders (waybill_no, company, receiver_name, receiver_phone, receiver_address, size, refrigerated, weight, pickup_code, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_transit')
+    `, [detailForm.waybill_no, detailForm.company, detailForm.receiver_name, detailForm.receiver_phone, detailForm.receiver_address, detailForm.size, detailForm.refrigerated, detailForm.weight, detailForm.pickup_code])
+  }
 
   if (r.success) {
     ElMessage.success('保存成功')
